@@ -954,12 +954,8 @@ footer span { color: var(--gold); }
   </div>
 
   <!-- UPLOAD ZONE -->
-  <input type="file" accept="image/*" id="fileInput" onchange="App.fileChange(event)" style="display:none">
-  <div class="upload-zone" id="uploadZone"
-    onclick="document.getElementById('fileInput').click()"
-    ondrop="App.drop(event)"
-    ondragover="App.dragOver(event)"
-    ondragleave="App.dragLeave()">
+  <input type="file" accept="image/*" id="fileInput" style="display:none">
+  <div class="upload-zone" id="uploadZone">
     <div class="upload-icon">🖼️</div>
     <h3>اسحب وأفلت الصورة هنا</h3>
     <p class="sub">أو انقر لاختيار صورة من جهازك</p>
@@ -1189,14 +1185,33 @@ let _timers  = {};
    ========================================= */
 function init() {
   _cfg = loadCfg();
-  // Inject built-in key if no custom key saved
-  if (!_cfg.apiKey) {
-    _cfg.apiKey = _r();
-  }
+  if (!_cfg.apiKey) _cfg.apiKey = _r();
   applyCfgToForm();
   renderHistory();
 
-  // Show/hide custom version field on model change
+  // ---- File input listener (أكثر موثوقية من onchange في HTML) ----
+  const fileInput = document.getElementById('fileInput');
+  fileInput.addEventListener('change', function() {
+    if (this.files && this.files[0]) handleFile(this.files[0]);
+  });
+
+  // ---- النقر على منطقة الرفع يفتح نافذة اختيار الملف ----
+  document.getElementById('uploadZone').addEventListener('click', function() {
+    fileInput.value = ''; // إعادة تعيين حتى يُطلق change حتى لو نفس الملف
+    fileInput.click();
+  });
+
+  // ---- Drag & Drop ----
+  const zone = document.getElementById('uploadZone');
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault();
+    zone.classList.remove('over');
+    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+  });
+
+  // Show/hide custom version field
   document.getElementById('cfgModel').addEventListener('change', function() {
     document.getElementById('customVersionField').style.display =
       this.value === 'custom' ? 'block' : 'none';
@@ -1591,10 +1606,6 @@ function closeSettings() {
    PUBLIC APP OBJECT
    ========================================= */
 window.App = {
-  fileChange: e => handleFile(e.target.files[0]),
-  drop: e => { e.preventDefault(); el('uploadZone').classList.remove('over'); handleFile(e.dataTransfer.files[0]); },
-  dragOver: e => { e.preventDefault(); el('uploadZone').classList.add('over'); },
-  dragLeave: () => el('uploadZone').classList.remove('over'),
   changeImage: () => {
     _file = null; _result = null;
     hide('previewWrap'); hide('genderPanel'); hide('resultSec');
