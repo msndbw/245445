@@ -266,6 +266,7 @@ main {
 
 /* ===== UPLOAD ZONE ===== */
 .upload-zone {
+  display: block;
   border: 2px dashed var(--border2);
   border-radius: var(--radius);
   padding: 3.5rem 2rem;
@@ -275,6 +276,8 @@ main {
   background: var(--surface);
   position: relative;
   margin-bottom: 1.25rem;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .upload-zone:hover,
@@ -284,9 +287,7 @@ main {
   box-shadow: 0 0 0 4px rgba(201,168,76,0.06);
 }
 
-.upload-zone input[type="file"] {
-  display: none;
-}
+
 
 .upload-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; }
 
@@ -954,13 +955,16 @@ footer span { color: var(--gold); }
   </div>
 
   <!-- UPLOAD ZONE -->
-  <input type="file" accept="image/*" id="fileInput" style="display:none">
-  <div class="upload-zone" id="uploadZone">
+  <input type="file" accept="image/*" id="fileInput" style="position:absolute;left:-9999px;opacity:0;width:1px;height:1px">
+  <label for="fileInput" class="upload-zone" id="uploadZone"
+    ondrop="handleDropEvt(event)"
+    ondragover="handleDragOver(event)"
+    ondragleave="handleDragLeave()">
     <div class="upload-icon">🖼️</div>
     <h3>اسحب وأفلت الصورة هنا</h3>
     <p class="sub">أو انقر لاختيار صورة من جهازك</p>
     <span class="hint">JPG · PNG · WEBP — حتى 10MB</span>
-  </div>
+  </label>
 
   <!-- PREVIEW -->
   <div class="preview-wrap" id="previewWrap">
@@ -1189,26 +1193,9 @@ function init() {
   applyCfgToForm();
   renderHistory();
 
-  // ---- File input listener (أكثر موثوقية من onchange في HTML) ----
-  const fileInput = document.getElementById('fileInput');
-  fileInput.addEventListener('change', function() {
+  // ---- File input: change event ----
+  document.getElementById('fileInput').addEventListener('change', function() {
     if (this.files && this.files[0]) handleFile(this.files[0]);
-  });
-
-  // ---- النقر على منطقة الرفع يفتح نافذة اختيار الملف ----
-  document.getElementById('uploadZone').addEventListener('click', function() {
-    fileInput.value = ''; // إعادة تعيين حتى يُطلق change حتى لو نفس الملف
-    fileInput.click();
-  });
-
-  // ---- Drag & Drop ----
-  const zone = document.getElementById('uploadZone');
-  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('over'); });
-  zone.addEventListener('dragleave', () => zone.classList.remove('over'));
-  zone.addEventListener('drop', e => {
-    e.preventDefault();
-    zone.classList.remove('over');
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
   });
 
   // Show/hide custom version field
@@ -1265,7 +1252,7 @@ function handleFile(file) {
     show('previewWrap');
     show('genderPanel');
     el('btnProcess').disabled = false;
-    hide('uploadZone');
+    el('uploadZone').style.display = 'none';
     setStep(1, 'done');
     setStep(2, 'active');
   };
@@ -1609,7 +1596,7 @@ window.App = {
   changeImage: () => {
     _file = null; _result = null;
     hide('previewWrap'); hide('genderPanel'); hide('resultSec');
-    show('uploadZone');
+    el('uploadZone').style.display = '';
     el('btnProcess').disabled = true;
     el('btnProcess').style.display = '';
     el('fileInput').value = '';
@@ -1654,6 +1641,25 @@ window.App = {
     toast('تم مسح السجل', 'ok');
   }
 };
+
+
+/* =========================================
+   DRAG & DROP GLOBAL HANDLERS
+   (called from label's inline events)
+   ========================================= */
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.add('over');
+}
+function handleDragLeave() {
+  document.getElementById('uploadZone').classList.remove('over');
+}
+function handleDropEvt(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('over');
+  const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if (f) handleFile(f);
+}
 
 /* ===== START ===== */
 init();
