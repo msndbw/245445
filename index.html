@@ -323,64 +323,127 @@ function buildPrompt(g){
 }
 
 
-// ── Step 2: Remove Background (RMBG-2.0) ──
+// ── Resize image before sending (reduces payload, avoids size errors) ──
+async function resizeForAPI(dataURL, maxPx=800){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const sc=Math.min(maxPx/img.width, maxPx/img.height, 1);
+      const w=Math.round(img.width*sc), h=Math.round(img.height*sc);
+      const c=document.createElement('canvas');
+      c.width=w; c.height=h;
+      c.getContext('2d').drawImage(img,0,0,w,h);
+      resolve(c.toDataURL('image/jpeg',0.88));
+    };
+    img.onerror=()=>resolve(dataURL);
+    img.src=dataURL;
+  });
+}
+
+// ── Helper: Replicate API call with model slug (more stable than version hash) ──
+async function replicateRun(modelSlug, input, key){
+  const url=`https://api.replicate.com/v1/models/${modelSlug}/predictions`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json','Prefer':'wait=60'},
+    body:JSON.stringify({input})
+  });
+  if(!r.ok){
+    const e=await r.json().catch(()=>({}));
+    throw new Error(e.detail||`خطأ ${r.status}: ${modelSlug}`);
+  }
+  const pred=await r.json();
+  // If synchronous response came back already
+  if(pred.status==='succeeded'){
+    const out=Array.isArray(pred.output)?pred.output[0]:pred.output;
+    if(out) return await urlToDataURL(out);
+  }
+  if(pred.status==='failed') throw new Error(pred.error||'فشل النموذج');
+  // Otherwise poll
+  return await poll(pred.id, key);
+}
+
+// ── Convert output URL to dataURL (handles CORS safely) ──
+async function urlToDataURL(url){
+  try{
+    const blob=await(await fetch(url)).blob();
+    return await b2u(blob);
+  }catch(_){
+    // If CORS blocks direct fetch, return URL wrapped in canvas
+    return new Promise(resolve=>{
+      const img=new Image();
+      img.crossOrigin='anonymous';
+      img.onload=()=>{
+        const c=document.createElement('canvas');
+        c.width=img.width; c.height=img.height;
+        c.getContext('2d').drawImage(img,0,0);
+        try{resolve(c.toDataURL('image/jpeg',0.92));}
+        catch(_){resolve(url);}
+      };
+      img.onerror=()=>resolve(url);
+      img.src=url+'?t='+Date.now();
+    });
+  }
+}
+
+// ── Step 2: Remove Background ──
 async function removeBg(dataURL, key){
-  const base64=dataURL.split(',')[1];
-  const mime=dataURL.split(';')[0].split(':')[1];
-  const r=await fetch('https://api.replicate.com/v1/predictions',{
-    method:'POST',
-    headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      version:"a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc",
-      input:{image:`data:${mime};base64,${base64}`}
-    })
-  });
-  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(e.detail||`Replicate خطأ ${r.status} — تحقق من API Key`)}
-  const pred=await r.json();
-  return await poll(pred.id,key);
+  const small=await resizeForAPI(dataURL, 800);
+  const base64=small.split(',')[1];
+  const mime=small.split(';')[0].split(':')[1];
+  try{
+    return await replicateRun('851-labs/background-remover',
+      {image:`data:${mime};base64,${base64}`}, key);
+  }catch(e){
+    console.warn('BG removal failed, trying fallback model:', e.message);
+    try{
+      // Fallback: cjwbw/rembg
+      return await replicateRun('cjwbw/rembg',
+        {image:`data:${mime};base64,${base64}`, model:'u2net'}, key);
+    }catch(e2){
+      console.warn('Both BG models failed, using original:', e2.message);
+      return dataURL; // Graceful fallback
+    }
+  }
 }
 
-// ── Step 3: Add Clothes (Stable Diffusion img2img) ──
+// ── Step 3: Add Clothes (SD img2img) ──
 async function addClothes(dataURL, pObj, key){
-  const base64=dataURL.split(',')[1];
-  const mime=dataURL.split(';')[0].split(':')[1];
-  const r=await fetch('https://api.replicate.com/v1/predictions',{
-    method:'POST',
-    headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      version:"ac732df83cea7fff18b8472768c88ad041fa750ff7682a21affe81863cbe77e4",
-      input:{
-        image:`data:${mime};base64,${base64}`,
-        prompt:pObj.prompt,
-        negative_prompt:pObj.negative,
-        prompt_strength:0.52,
-        num_inference_steps:30,
-        guidance_scale:8.5,
-        scheduler:"DPMSolverMultistep"
-      }
-    })
-  });
-  if(!r.ok)return dataURL;
-  const pred=await r.json();
-  try{return await poll(pred.id,key)}catch(_){return dataURL}
+  const small=await resizeForAPI(dataURL, 768);
+  const base64=small.split(',')[1];
+  const mime=small.split(';')[0].split(':')[1];
+  try{
+    return await replicateRun('stability-ai/stable-diffusion-img2img',{
+      image:`data:${mime};base64,${base64}`,
+      prompt:pObj.prompt,
+      negative_prompt:pObj.negative,
+      prompt_strength:0.5,
+      num_inference_steps:25,
+      guidance_scale:8
+    }, key);
+  }catch(e){
+    console.warn('Clothes step failed, skipping:', e.message);
+    return dataURL; // Graceful fallback
+  }
 }
 
-// ── Step 4: Face Enhance (CodeFormer) ──
+// ── Step 4: Face Enhance (GFPGAN — more stable than CodeFormer) ──
 async function faceEnhance(dataURL, key){
-  const base64=dataURL.split(',')[1];
-  const mime=dataURL.split(';')[0].split(':')[1];
-  const r=await fetch('https://api.replicate.com/v1/predictions',{
-    method:'POST',
-    headers:{'Authorization':`Bearer ${key}`,'Content-Type':'application/json'},
-    body:JSON.stringify({
-      version:"7de2ea26c616d5bf2245ad0d5e24f0ff9a6204578a5c876db53a4a975edde6cd",
-      input:{image:`data:${mime};base64,${base64}`,upscale:1,face_upsample:true,background_enhance:false,codeformer_fidelity:0.8}
-    })
-  });
-  if(!r.ok)return canvasEnhance(dataURL);
-  const pred=await r.json();
-  try{return await poll(pred.id,key)}catch(_){return canvasEnhance(dataURL)}
+  const small=await resizeForAPI(dataURL, 768);
+  const base64=small.split(',')[1];
+  const mime=small.split(';')[0].split(':')[1];
+  try{
+    return await replicateRun('tencentarc/gfpgan',{
+      img:`data:${mime};base64,${base64}`,
+      version:2,
+      scale:1
+    }, key);
+  }catch(e){
+    console.warn('Face enhance failed, using canvas:', e.message);
+    return canvasEnhance(dataURL);
+  }
 }
+
 
 // ── Step 5: White background + 3:4 ratio ──
 function composeWhite(dataURL){
@@ -422,16 +485,19 @@ function canvasEnhance(dataURL){
 // ── Poll Replicate ──
 async function poll(id,key,max=90){
   for(let i=0;i<max;i++){
-    await wait(2200);
-    const r=await fetch(`https://api.replicate.com/v1/predictions/${id}`,{headers:{'Authorization':`Bearer ${key}`}});
+    await wait(2500);
+    const r=await fetch(`https://api.replicate.com/v1/predictions/${id}`,{
+      headers:{'Authorization':`Bearer ${key}`}
+    });
+    if(!r.ok) continue; // retry on network hiccup
     const d=await r.json();
     if(d.status==='succeeded'){
       const out=Array.isArray(d.output)?d.output[0]:d.output;
       if(!out)throw new Error('لم يُرجع الخادم نتيجة');
-      const blob=await(await fetch(out)).blob();
-      return await b2u(blob);
+      return await urlToDataURL(out);
     }
-    if(d.status==='failed'||d.status==='canceled')throw new Error(d.error||'فشلت المعالجة على الخادم');
+    if(d.status==='failed'||d.status==='canceled')
+      throw new Error(d.error||'فشلت المعالجة على الخادم');
   }
   throw new Error('انتهت مهلة الانتظار — حاول مرة أخرى');
 }
