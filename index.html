@@ -285,12 +285,7 @@ main {
 }
 
 .upload-zone input[type="file"] {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
-  width: 100%;
-  height: 100%;
+  display: none;
 }
 
 .upload-icon { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; }
@@ -959,11 +954,12 @@ footer span { color: var(--gold); }
   </div>
 
   <!-- UPLOAD ZONE -->
+  <input type="file" accept="image/*" id="fileInput" onchange="App.fileChange(event)" style="display:none">
   <div class="upload-zone" id="uploadZone"
+    onclick="document.getElementById('fileInput').click()"
     ondrop="App.drop(event)"
     ondragover="App.dragOver(event)"
     ondragleave="App.dragLeave()">
-    <input type="file" accept="image/*" id="fileInput" onchange="App.fileChange(event)">
     <div class="upload-icon">🖼️</div>
     <h3>اسحب وأفلت الصورة هنا</h3>
     <p class="sub">أو انقر لاختيار صورة من جهازك</p>
